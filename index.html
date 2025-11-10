@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day13 - Balloon Pop Game</title>
+<style>
+  body {
+    margin: 0;
+    background: linear-gradient(180deg, #87ceeb, #f0f8ff);
+    font-family: system-ui, sans-serif;
+    color: #222;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100vh;
+  }
+  header {
+    text-align: center;
+    margin: 10px 0;
+  }
+  canvas {
+    border: 2px solid #333;
+    border-radius: 10px;
+    background: #cce9ff;
+    touch-action: manipulation;
+  }
+  .hud {
+    margin: 10px 0;
+    display: flex;
+    gap: 1rem;
+    font-size: 16px;
+  }
+  button, select {
+    font-size: 16px;
+    padding: 6px 12px;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Day13 - Balloon Pop</h1>
+    <div class="hud">
+      <div>スコア: <span id="score">0</span></div>
+      <div>残り時間: <span id="time">30</span>s</div>
+      <div>ベスト: <span id="best">0</span></div>
+      <select id="mode">
+        <option value="easy">Easy</option>
+        <option value="normal" selected>Normal</option>
+        <option value="hard">Hard</option>
+      </select>
+      <button id="startBtn">Start</button>
+    </div>
+  </header>
+
+  <canvas id="game" width="800" height="600" aria-label="Balloon Pop Game"></canvas>
+  <div aria-live="polite" id="a11y"></div>
+
+  <script>
+  // ==============================
+  // 🎈 Balloon Pop Game (Day13)
+  // ==============================
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const timeEl = document.getElementById('time');
+  const bestEl = document.getElementById('best');
+  const startBtn = document.getElementById('startBtn');
+  const modeSel = document.getElementById('mode');
+  const a11y = document.getElementById('a11y');
+
+  // --- ゲーム設定 ---
+  const GAME_MS = 30000; // 30秒
+  const MODES = {
+    easy:   { spawnEvery: 700,  vy: [60, 90],  r: [26, 38], ttl: [3000, 4200], concurrent: 2 },
+    normal: { spawnEvery: 520,  vy: [90, 140], r: [22, 32], ttl: [2600, 3600], concurrent: 3 },
+    hard:   { spawnEvery: 380,  vy: [140, 200],r: [18, 26], ttl: [2000, 3000], concurrent: 4 },
+  };
+
+  // --- ゲーム状態 ---
+  let state = {
+    phase: 'idle', // 'playing' or 'ended'
+    mode: 'normal',
+    score: 0,
+    timeLeft: GAME_MS,
+    balloons: [],
+    timers: { spawn: 0 },
+    best: JSON.parse(localStorage.getItem('balloon-best') || '{}')
+  };
+
+  function resetGame() {
+    state.phase = 'idle';
+    state.score = 0;
+    state.timeLeft = GAME_MS;
+    state.balloons = [];
+    scoreEl.textContent = 0;
+    timeEl.textContent = 30;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+  }
+
+  function startGame() {
+    resetGame();
+    state.mode = modeSel.value;
+    state.phase = 'playing';
+    startBtn.disabled = true;
+    a11y.textContent = 'ゲーム開始';
+    last = performance.now();
+    requestAnimationFrame(loop);
+  }
+
+  function endGame() {
+    state.phase = 'ended';
+    startBtn.disabled = false;
+    const sec = (state.timeLeft/1000).toFixed(1);
+    a11y.textContent = `終了！スコア${state.score}点`;
+    // ベストスコア保存
+    const prev = state.best[state.mode] || 0;
+    if(state.score > prev){
+      state.best[state.mode] = state.score;
+      localStorage.setItem('balloon-best', JSON.stringify(state.best));
+    }
+    bestEl.textContent = state.best[state.mode] || 0;
+  }
+
+  let last = 0;
+  function loop(now){
+    const dt = now - last; last = now;
+    if(state.phase !== 'playing') return;
+
+    const conf = MODES[state.mode];
+
+    // --- スポーン処理 ---
+    state.timers.spawn += dt;
+    if(state.timers.spawn >= conf.spawnEvery && state.balloons.length < conf.concurrent){
+      spawnBalloon(conf);
+      state.timers.spawn = 0;
+    }
+
+    // --- 風船更新 ---
+    const nowMs = performance.now();
+    for(const b of state.balloons){
+      b.y -= b.vy * (dt/1000);
+      if(nowMs - b.bornAt > b.ttl || b.y + b.r < 0) b.alive = false;
+    }
+    state.balloons = state.balloons.filter(b=>b.alive);
+
+    // --- 残り時間更新 ---
+    state.timeLeft = Math.max(0, state.timeLeft - dt);
+    timeEl.textContent = Math.ceil(state.timeLeft/1000);
+    if(state.timeLeft <= 0) return endGame();
+
+    // --- 描画 ---
+    draw();
+
+    requestAnimationFrame(loop);
+  }
+
+  // --- 風船生成 ---
+  function spawnBalloon(conf){
+    const r = randRange(...conf.r);
+    const x = randRange(r, canvas.width - r);
+    const y = canvas.height + r;
+    const vy = randRange(...conf.vy);
+    const ttl = randRange(...conf.ttl);
+    const colors = ['#ff6b6b','#ffa94d','#51cf66','#339af0','#845ef7'];
+    const color = colors[Math.floor(Math.random()*colors.length)];
+    state.balloons.push({id:Math.random(),x,y,r,vy,ttl,bornAt:performance.now(),color,alive:true});
+  }
+
+  // --- 描画 ---
+  function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    for(const b of state.balloons){
+      // 糸
+      ctx.beginPath();
+      ctx.strokeStyle = '#666';
+      ctx.moveTo(b.x, b.y + b.r);
+      ctx.lineTo(b.x, b.y + b.r + 20);
+      ctx.stroke();
+      // 本体
+      ctx.beginPath();
+      ctx.fillStyle = b.color;
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+
+  // --- クリック判定 ---
+  canvas.addEventListener('pointerdown', e => {
+    if(state.phase!=='playing') return;
+    const p = toCanvasPoint(e);
+    for(const b of state.balloons){
+      const dx=p.x-b.x, dy=p.y-b.y;
+      if(dx*dx+dy*dy < b.r*b.r){
+        b.alive=false;
+        state.score++;
+        scoreEl.textContent = state.score;
+        break;
+      }
+    }
+  });
+
+  // --- 座標変換 ---
+  function toCanvasPoint(e){
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      x:(e.clientX-rect.left)*scaleX,
+      y:(e.clientY-rect.top)*scaleY
+    };
+  }
+
+  // --- 乱数ユーティリティ ---
+  const randRange = (min,max)=>min+Math.random()*(max-min);
+
+  // --- イベント設定 ---
+  startBtn.addEventListener('click', startGame);
+  modeSel.addEventListener('change', ()=>{
+    bestEl.textContent = state.best[modeSel.value] || 0;
+  });
+
+  // 初期表示
+  bestEl.textContent = state.best[state.mode] || 0;
+  draw();
+  </script>
+</body>
+</html>
